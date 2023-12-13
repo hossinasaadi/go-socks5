@@ -51,6 +51,8 @@ type Config struct {
 
 	// Optional Disable FQDN Resolver
 	DisableFQDN bool
+
+	ShouldStop bool
 }
 
 // Server is reponsible for accepting connections and handling
@@ -114,6 +116,10 @@ func (s *Server) Serve(l net.Listener) error {
 		conn, err := l.Accept()
 		if err != nil {
 			return err
+		}
+		if s.config.ShouldStop {
+			l.Close()
+			return nil
 		}
 		go s.ServeConn(conn)
 	}
