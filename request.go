@@ -1,6 +1,7 @@
 package socks5
 
 import (
+	"encoding/binary"
 	"fmt"
 	"io"
 	"net"
@@ -236,20 +237,101 @@ func (s *Server) handleBind(ctx context.Context, conn conn, req *Request) error 
 // handleAssociate is used to handle a connect command
 func (s *Server) handleAssociate(ctx context.Context, conn conn, req *Request) error {
 	// Check if this is allowed
-	if ctx_, ok := s.config.Rules.Allow(ctx, req); !ok {
-		if err := sendReply(conn, ruleFailure, nil); err != nil {
-			return fmt.Errorf("Failed to send reply: %v", err)
-		}
-		return fmt.Errorf("Associate to %v blocked by rules", req.DestAddr)
-	} else {
-		ctx = ctx_
-	}
+	// if ctx_, ok := s.config.Rules.Allow(ctx, req); !ok {
+	// 	if err := sendReply(conn, ruleFailure, nil); err != nil {
+	// 		return fmt.Errorf("Failed to send reply: %v", err)
+	// 	}
+	// 	return fmt.Errorf("Associate to %v blocked by rules", req.DestAddr)
+	// } else {
+	// 	ctx = ctx_
+	// }
 
 	// TODO: Support associate
-	if err := sendReply(conn, commandNotSupported, nil); err != nil {
-		return fmt.Errorf("Failed to send reply: %v", err)
+
+	if s.config.UDPGW == nil {
+		return nil
 	}
+
+	// Step 1: Bind local UDP port
+	pc, err := net.ListenPacket("udp", "0.0.0.0:0")
+	if err != nil {
+		return err
+	}
+	udpConn := pc.(*net.UDPConn)
+	localAddr := udpConn.LocalAddr().(*net.UDPAddr)
+
+	// Step 2: Send SOCKS5 success reply with bound address
+	bindAddr := &AddrSpec{IP: localAddr.IP, Port: localAddr.Port}
+	if err := sendReply(conn, successReply, bindAddr); err != nil {
+		return err
+	}
+
+	// Step 3: Handle UDP packets
+	go func() {
+		buf := make([]byte, 65535)
+		for {
+			n, clientAddr, err := udpConn.ReadFromUDP(buf)
+			if err != nil {
+				break
+			}
+
+			// Parse SOCKS5 UDP datagram
+			if n < 10 {
+				continue
+			}
+			frag := buf[2]
+			if frag != 0 {
+				continue // No fragmentation supported
+			}
+
+			// Extract destination
+			addrType := buf[3]
+			offset := 4
+			var dstIP net.IP
+			var dstPort int
+
+			switch addrType {
+			case ipv4Address:
+				dstIP = net.IP(buf[offset : offset+4])
+				offset += 4
+			case ipv6Address:
+				dstIP = net.IP(buf[offset : offset+16])
+				offset += 16
+			case fqdnAddress:
+				addrLen := int(buf[offset])
+				offset++
+				// Ignore FQDN for now — needs DNS resolve
+				offset += addrLen
+				continue
+			}
+			dstPort = int(binary.BigEndian.Uint16(buf[offset : offset+2]))
+			offset += 2
+
+			payload := buf[offset:n]
+
+			// Step 4: Forward using udpgw
+			remote := &net.UDPAddr{IP: dstIP, Port: dstPort}
+			session, _ := s.config.UDPGW.AddSession(remote, func(resp []byte) {
+				// Wrap response in SOCKS5 UDP datagram
+				var reply []byte
+				// addrLen := 4 // only IPv4 supported here
+
+				header := []byte{0x00, 0x00, 0x00, ipv4Address}
+				header = append(header, dstIP.To4()...)
+				port := make([]byte, 2)
+				binary.BigEndian.PutUint16(port, uint16(dstPort))
+				header = append(header, port...)
+				reply = append(header, resp...)
+
+				udpConn.WriteToUDP(reply, clientAddr)
+			})
+
+			s.config.UDPGW.Send(session, payload, false, false)
+		}
+	}()
+
 	return nil
+
 }
 
 // readAddrSpec is used to read AddrSpec.

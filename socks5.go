@@ -55,6 +55,8 @@ type Config struct {
 	ShouldStop bool
 
 	Ctx context.Context
+
+	UDPGW *Client
 }
 
 // Server is reponsible for accepting connections and handling
@@ -133,7 +135,6 @@ func (s *Server) Serve(l net.Listener) error {
 		}
 	}
 }
-
 
 // ServeConn is used to serve a single connection.
 func (s *Server) ServeConn(conn net.Conn) error {
