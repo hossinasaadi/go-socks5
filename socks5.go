@@ -121,22 +121,19 @@ func (s *Server) ListenAndServe(network, addr string) error {
 // Serve is used to serve connections from a listener
 func (s *Server) Serve(l net.Listener) error {
 	for {
-		for {
-			select {
-			case <-s.Ctx.Done():
-				return fmt.Errorf("stopping server")
-			default:
-				conn, err := l.Accept()
-				if err != nil {
-					return err
-				}
-				go s.ServeConn(conn)
+		select {
+		case <-s.Ctx.Done():
+			return fmt.Errorf("stopping server")
+		default:
+			conn, err := l.Accept()
+			if err != nil {
+				return err
 			}
+			go s.ServeConn(conn)
 		}
-
 	}
-	return nil
 }
+
 
 // ServeConn is used to serve a single connection.
 func (s *Server) ServeConn(conn net.Conn) error {
