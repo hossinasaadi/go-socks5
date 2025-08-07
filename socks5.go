@@ -53,6 +53,8 @@ type Config struct {
 	DisableFQDN bool
 
 	ShouldStop bool
+
+	Ctx context.Context
 }
 
 // Server is reponsible for accepting connections and handling
@@ -60,6 +62,7 @@ type Config struct {
 type Server struct {
 	config      *Config
 	authMethods map[uint8]Authenticator
+	Ctx         context.Context
 }
 
 // New creates a new Server and potentially returns an error
@@ -88,8 +91,13 @@ func New(conf *Config) (*Server, error) {
 		conf.Logger = log.New(os.Stdout, "", log.LstdFlags)
 	}
 
+	if conf.Ctx == nil {
+		conf.Ctx = context.Background()
+	}
+
 	server := &Server{
 		config: conf,
+		Ctx:    conf.Ctx,
 	}
 
 	server.authMethods = make(map[uint8]Authenticator)
@@ -113,15 +121,19 @@ func (s *Server) ListenAndServe(network, addr string) error {
 // Serve is used to serve connections from a listener
 func (s *Server) Serve(l net.Listener) error {
 	for {
-		conn, err := l.Accept()
-		if err != nil {
-			return err
+		for {
+			select {
+			case <-s.Ctx.Done():
+				return fmt.Errorf("stopping server")
+			default:
+				conn, err := l.Accept()
+				if err != nil {
+					return err
+				}
+				go s.ServeConn(conn)
+			}
 		}
-		if s.config.ShouldStop {
-			l.Close()
-			return nil
-		}
-		go s.ServeConn(conn)
+
 	}
 	return nil
 }
