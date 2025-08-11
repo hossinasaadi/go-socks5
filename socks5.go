@@ -52,8 +52,6 @@ type Config struct {
 	// Optional Disable FQDN Resolver
 	DisableFQDN bool
 
-	ShouldStop bool
-
 	Ctx context.Context
 
 	UDPGW *Client
@@ -125,6 +123,7 @@ func (s *Server) Serve(l net.Listener) error {
 	for {
 		select {
 		case <-s.Ctx.Done():
+			l.Close()
 			return fmt.Errorf("stopping server")
 		default:
 			conn, err := l.Accept()
